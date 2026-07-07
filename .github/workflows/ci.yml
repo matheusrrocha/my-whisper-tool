@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main, develop]
+    tags: ["v*"]
   pull_request:
     branches: [main, develop]
 
@@ -40,3 +41,27 @@ jobs:
         with:
           name: WhisperFlow.app
           path: build/WhisperFlow.zip
+
+  release:
+    name: Publish release
+    runs-on: macos-15
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release app bundle
+        run: ./scripts/build-app.sh
+
+      - name: Zip app
+        env:
+          TAG: ${{ github.ref_name }}
+        run: ditto -c -k --keepParent build/WhisperFlow.app "build/WhisperFlow-$TAG.zip"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/WhisperFlow-*.zip
+          generate_release_notes: true
