@@ -5,8 +5,13 @@ import CoreAudio
 /// Records from the selected input device (or system default), converting to
 /// 16 kHz mono Float32 (what Whisper expects) and exposing a smoothed input
 /// level for UI feedback.
+///
+/// A fresh AVAudioEngine is built for every recording: assigning an input
+/// device to an already-initialized engine silently stops it from rendering,
+/// and the tap format must be derived from the hardware sample rate of the
+/// device actually in use.
 final class AudioRecorder {
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false
     )!
@@ -15,7 +20,7 @@ final class AudioRecorder {
     private var buffer: [Float] = []
     private var _level: Float = 0
 
-    private(set) var isRecording = false
+    var isRecording: Bool { engine != nil }
 
     /// Smoothed input level in 0...1, safe to read from any thread.
     var level: Float {
@@ -29,41 +34,63 @@ final class AudioRecorder {
     }
 
     func start() throws {
-        guard !isRecording else { return }
+        guard engine == nil else { return }
         lock.lock()
         buffer.removeAll(keepingCapacity: true)
         _level = 0
         lock.unlock()
 
-        applySelectedDevice()
-
+        let engine = AVAudioEngine()
         let input = engine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0 else {
+
+        if let uid = Settings.shared.inputDeviceUID {
+            if let deviceID = Self.audioDeviceID(forUID: uid) {
+                assignInputDevice(deviceID, to: input)
+            } else {
+                Log.audio.error("selected input device \(uid, privacy: .public) not found — using system default")
+            }
+        }
+
+        // After a device switch the node's output format can be stale; trust
+        // the hardware sample rate and rebuild the tap format from it.
+        let hardwareRate = input.inputFormat(forBus: 0).sampleRate
+        let outputFormat = input.outputFormat(forBus: 0)
+        guard hardwareRate > 0, outputFormat.channelCount > 0 else {
             throw NSError(domain: "WhisperFlow", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "No audio input device available.",
             ])
         }
-        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+        guard let nodeFormat = AVAudioFormat(
+            commonFormat: outputFormat.commonFormat,
+            sampleRate: hardwareRate,
+            channels: outputFormat.channelCount,
+            interleaved: outputFormat.isInterleaved
+        ) else {
+            throw NSError(domain: "WhisperFlow", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "Could not derive input format.",
+            ])
+        }
+        guard let converter = AVAudioConverter(from: nodeFormat, to: targetFormat) else {
             throw NSError(domain: "WhisperFlow", code: 2, userInfo: [
                 NSLocalizedDescriptionKey: "Could not create audio converter.",
             ])
         }
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] pcmBuffer, _ in
+        input.installTap(onBus: 0, bufferSize: 4096, format: nodeFormat) { [weak self] pcmBuffer, _ in
             self?.process(pcmBuffer, converter: converter)
         }
         engine.prepare()
         try engine.start()
-        isRecording = true
+        self.engine = engine
+        Log.audio.notice("recording started (rate \(hardwareRate, privacy: .public) Hz, \(outputFormat.channelCount, privacy: .public) ch)")
     }
 
     /// Stops recording and returns the captured 16 kHz mono samples.
     func stop() -> [Float] {
-        guard isRecording else { return [] }
+        guard let engine else { return [] }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        isRecording = false
+        self.engine = nil
         lock.lock(); defer { lock.unlock() }
         let samples = buffer
         buffer = []
@@ -73,13 +100,11 @@ final class AudioRecorder {
 
     // MARK: - Input device selection
 
-    /// Points the engine's input unit at the user-selected device, if any.
-    /// Falls back silently to the system default when the device is gone.
-    private func applySelectedDevice() {
-        guard let uid = Settings.shared.inputDeviceUID,
-              let deviceID = Self.audioDeviceID(forUID: uid),
-              let audioUnit = engine.inputNode.audioUnit
-        else { return }
+    private func assignInputDevice(_ deviceID: AudioDeviceID, to input: AVAudioInputNode) {
+        guard let audioUnit = input.audioUnit else {
+            Log.audio.error("cannot select input device: input node has no audio unit")
+            return
+        }
         var device = deviceID
         let status = AudioUnitSetProperty(
             audioUnit,
@@ -89,8 +114,10 @@ final class AudioRecorder {
             &device,
             UInt32(MemoryLayout<AudioDeviceID>.size)
         )
-        if status != noErr {
-            NSLog("WhisperFlow: could not select input device \(uid) (OSStatus \(status))")
+        if status == noErr {
+            Log.audio.notice("input device assigned (id \(deviceID, privacy: .public))")
+        } else {
+            Log.audio.error("could not select input device (OSStatus \(status, privacy: .public))")
         }
     }
 

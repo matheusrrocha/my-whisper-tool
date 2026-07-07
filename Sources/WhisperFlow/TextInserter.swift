@@ -5,6 +5,13 @@ import AppKit
 @MainActor
 final class TextInserter {
     func insert(_ text: String) {
+        guard AXIsProcessTrusted() else {
+            Log.insert.error("cannot paste: Accessibility not granted")
+            return
+        }
+        let frontmost = NSWorkspace.shared.frontmostApplication?.localizedName ?? "unknown app"
+        Log.insert.notice("inserting \(text.count, privacy: .public) chars into \(frontmost, privacy: .public)")
+
         let pasteboard = NSPasteboard.general
 
         var savedItems: [NSPasteboardItem] = []
@@ -22,25 +29,34 @@ final class TextInserter {
 
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        postCmdV()
 
+        // Give the pasteboard a moment to settle before the synthetic paste,
+        // and give the target app time to handle it before restoring.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            Self.postCmdV()
+        }
         if !savedItems.isEmpty {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 pasteboard.clearContents()
                 pasteboard.writeObjects(savedItems)
+                Log.insert.notice("clipboard restored")
             }
         }
     }
 
-    private func postCmdV() {
+    private static func postCmdV() {
         let source = CGEventSource(stateID: .combinedSessionState)
         // 9 = kVK_ANSI_V
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
-        else { return }
+        else {
+            Log.insert.error("could not create synthetic Cmd+V events")
+            return
+        }
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
+        Log.insert.notice("Cmd+V posted")
     }
 }

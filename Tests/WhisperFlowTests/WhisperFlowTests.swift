@@ -33,6 +33,23 @@ import AppKit
         #expect(TranscriptionEngine.clean("Hello world. (music)") == "Hello world.")
         #expect(TranscriptionEngine.clean("  Olá, tudo bem?  ") == "Olá, tudo bem?")
     }
+
+    @Test func plainFormattingLowercasesAndStripsTrailingPeriod() {
+        #expect(TranscriptionEngine.applyPlainFormatting("Hello world.") == "hello world")
+        #expect(TranscriptionEngine.applyPlainFormatting("Testing one two three") == "testing one two three")
+        // Internal punctuation is kept; only the trailing period is dropped.
+        #expect(TranscriptionEngine.applyPlainFormatting("Já entendi. Vamos lá.") == "já entendi. Vamos lá")
+        // Ellipses and other terminal punctuation are untouched.
+        #expect(TranscriptionEngine.applyPlainFormatting("Wait...") == "wait...")
+        #expect(TranscriptionEngine.applyPlainFormatting("Really?") == "really?")
+    }
+
+    @Test func spokenPeriodEndsWithDotSpace() {
+        #expect(TranscriptionEngine.applyPlainFormatting("Hello world period") == "hello world. ")
+        #expect(TranscriptionEngine.applyPlainFormatting("Hello world, period.") == "hello world. ")
+        #expect(TranscriptionEngine.applyPlainFormatting("Send the report full stop") == "send the report. ")
+        #expect(TranscriptionEngine.applyPlainFormatting("Até amanhã ponto final") == "até amanhã. ")
+    }
 }
 
 @Suite struct HotkeyFlagTests {
