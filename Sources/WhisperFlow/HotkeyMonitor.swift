@@ -22,15 +22,25 @@ final class HotkeyMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var retryTimer: Timer?
+    private var healthTimer: Timer?
 
     func start() {
         if !createTap() {
+            Log.hotkey.notice("event tap unavailable (Accessibility not granted yet) — retrying every 2.5s")
             retryTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
                 guard let self else { return }
                 if self.createTap() {
                     self.retryTimer?.invalidate()
                     self.retryTimer = nil
                 }
+            }
+        }
+        // Taps can be silently disabled (e.g. after a slow callback); revive them.
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            guard let self, let tap = self.eventTap else { return }
+            if !CGEvent.tapIsEnabled(tap: tap) {
+                Log.hotkey.error("event tap found disabled — re-enabling")
+                CGEvent.tapEnable(tap: tap, enable: true)
             }
         }
     }
@@ -63,6 +73,7 @@ final class HotkeyMonitor {
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        Log.hotkey.notice("event tap created")
         return true
     }
 
@@ -71,6 +82,7 @@ final class HotkeyMonitor {
 
         // macOS disables taps that stall; re-enable and move on.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            Log.hotkey.error("event tap disabled by \(type == .tapDisabledByTimeout ? "timeout" : "user input", privacy: .public) — re-enabling")
             if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: true) }
             return passthrough
         }
@@ -92,9 +104,11 @@ final class HotkeyMonitor {
                 let pressed = event.flags.contains(required)
                 if pressed && !isHeld {
                     isHeld = true
+                    Log.hotkey.notice("hold key pressed")
                     onPress?()
                 } else if !pressed && isHeld {
                     isHeld = false
+                    Log.hotkey.notice("hold key released")
                     onRelease?()
                 }
             } else if isHeld && !event.flags.contains(required) {

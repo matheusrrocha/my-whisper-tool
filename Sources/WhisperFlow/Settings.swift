@@ -118,6 +118,13 @@ final class Settings {
         set { defaults.set(newValue, forKey: "inputDeviceUID") }
     }
 
+    /// Lowercase the first letter and drop the trailing auto-period; a spoken
+    /// "period" still ends the text with ". ".
+    var plainFormatting: Bool {
+        get { defaults.object(forKey: "plainFormatting") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "plainFormatting") }
+    }
+
     var soundsEnabled: Bool {
         get { defaults.object(forKey: "soundsEnabled") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "soundsEnabled") }

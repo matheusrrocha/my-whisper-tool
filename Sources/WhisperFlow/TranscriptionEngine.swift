@@ -42,6 +42,7 @@ final class TranscriptionEngine {
         state = .downloading(0)
         loadTask = Task {
             do {
+                Log.engine.notice("downloading/verifying model \(variant, privacy: .public)")
                 let folder = try await WhisperKit.download(
                     variant: variant,
                     downloadBase: modelsFolder,
@@ -52,6 +53,7 @@ final class TranscriptionEngine {
                     }
                 }
                 guard !Task.isCancelled else { return }
+                Log.engine.notice("model on disk at \(folder.path, privacy: .public), loading")
                 self.state = .loading
                 let config = WhisperKitConfig(
                     modelFolder: folder.path,
@@ -65,8 +67,10 @@ final class TranscriptionEngine {
                 guard !Task.isCancelled else { return }
                 self.whisperKit = kit
                 self.state = .ready
+                Log.engine.notice("model ready")
             } catch {
                 guard !Task.isCancelled else { return }
+                Log.engine.error("model load failed: \(error.localizedDescription, privacy: .public)")
                 self.state = .failed(error.localizedDescription)
             }
         }
@@ -86,12 +90,38 @@ final class TranscriptionEngine {
         options.temperature = 0
         options.chunkingStrategy = .vad
 
+        Log.engine.notice("transcribe start: \(samples.count, privacy: .public) samples, language \(language ?? "auto", privacy: .public)")
         let results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: options)
+        Log.engine.notice("transcribe done: \(results.count, privacy: .public) result(s)")
         let text = results
             .map(\.text)
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return Self.clean(text)
+        var cleaned = Self.clean(text)
+        if Settings.shared.plainFormatting {
+            cleaned = Self.applyPlainFormatting(cleaned)
+        }
+        return cleaned
+    }
+
+    /// Dictation-friendly output: lowercase start, no auto-appended trailing
+    /// period. Saying "period" (or "full stop" / "ponto final") still ends
+    /// the text with ". ".
+    nonisolated static func applyPlainFormatting(_ text: String) -> String {
+        guard !text.isEmpty else { return text }
+        var result = text
+
+        let spokenPeriod = #"(?i)[\s,]*\b(period|full stop|ponto final)\s*[.!?]?\s*$"#
+        if let range = result.range(of: spokenPeriod, options: .regularExpression) {
+            result.replaceSubrange(range, with: ". ")
+        } else if result.hasSuffix(".") && !result.hasSuffix("..") {
+            result.removeLast()
+        }
+
+        if let first = result.first, first.isUppercase {
+            result = first.lowercased() + result.dropFirst()
+        }
+        return result
     }
 
     /// Strips Whisper artifacts like "[BLANK_AUDIO]" or "(music)" that show up on silence.

@@ -71,7 +71,22 @@ to" → **Do Nothing** so it doesn't also trigger macOS features.
   Switching models downloads them on demand.
 - **Permissions** — live Microphone/Accessibility status; click to open
   System Settings.
+- **Plain Formatting** (default on) — transcripts start lowercase and the
+  auto-appended final period is dropped; saying "period" (or "full stop" /
+  "ponto final") still ends the text with ". ".
 - **Sound Feedback**, **Restore Clipboard After Paste**, **Launch at Login**.
+
+## Troubleshooting
+
+The app logs every step (hotkey, recording, transcription, insertion):
+
+```sh
+/usr/bin/log show --last 10m --predicate 'subsystem == "dev.matheus.whisperflow"' --style compact
+```
+
+A transcription watchdog resets the app if a run ever hangs, and the hotkey
+listener revives itself if macOS disables it. If a recording captures no
+audio, an alert points at the usual cause (stale Microphone permission).
 
 ## Development
 

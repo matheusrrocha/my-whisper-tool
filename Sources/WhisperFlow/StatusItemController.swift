@@ -25,6 +25,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let modelRootItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
     private let micPermItem = NSMenuItem(title: "Microphone", action: #selector(openMicrophoneSettings), keyEquivalent: "")
     private let axPermItem = NSMenuItem(title: "Accessibility", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+    private let plainFormattingItem = NSMenuItem(title: "Plain Formatting (lowercase, no final period)", action: #selector(togglePlainFormatting), keyEquivalent: "")
     private let soundsItem = NSMenuItem(title: "Sound Feedback", action: #selector(toggleSounds), keyEquivalent: "")
     private let clipboardItem = NSMenuItem(title: "Restore Clipboard After Paste", action: #selector(toggleRestoreClipboard), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
@@ -214,6 +215,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        plainFormattingItem.target = self
+        menu.addItem(plainFormattingItem)
         soundsItem.target = self
         menu.addItem(soundsItem)
         clipboardItem.target = self
@@ -265,6 +268,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let axGranted = AXIsProcessTrusted()
         axPermItem.title = axGranted ? "Accessibility: Granted ✓" : "Accessibility: Not Granted — Open Settings…"
 
+        plainFormattingItem.state = settings.plainFormatting ? .on : .off
         soundsItem.state = settings.soundsEnabled ? .on : .off
         clipboardItem.state = settings.restoreClipboard ? .on : .off
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -362,6 +366,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func openPrivacyPane(_ pane: String) {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    @objc private func togglePlainFormatting() {
+        Settings.shared.plainFormatting.toggle()
     }
 
     @objc private func toggleSounds() {
